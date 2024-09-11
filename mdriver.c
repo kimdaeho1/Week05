@@ -229,6 +229,7 @@ int main(int argc, char **argv)
      * If no -f command line arg, then use the entire set of tracefiles 
      * defined in default_traces[]
      */
+
     if (tracefiles == NULL) {
         tracefiles = default_tracefiles;
         num_tracefiles = sizeof(default_tracefiles) / sizeof(char *) - 1;

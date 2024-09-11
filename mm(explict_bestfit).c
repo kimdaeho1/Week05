@@ -111,14 +111,23 @@ void delete_block(void *bp)
 
 static void *find_fit(size_t asize)
 {
-    void *bp = free_listp;  //free list의 포인터를 가져오고
-    while (bp != NULL) {    //free list가 있다면
-        if(GET_SIZE(HDRP(bp)) >= asize){    //어 있어
-            return bp;  //포인터 가져와
+    char *bp = free_listp;  //free list의 포인터를 가져오고
+    char *best_bp = NULL;
+    size_t best_size = (size_t)-1;  //일부러 큰 값을 지정
+    while (bp != NULL) 
+    {    //free list가 있다면
+        size_t block_size = GET_SIZE(HDRP(bp)); //block의 사이즈는 현재 내가 할당해야하는 사이즈
+        if(GET_SIZE(HDRP(bp)) >= asize) //그 사이즈보다 큰 가용블럭이 있다면
+            {    
+                if(block_size <best_size)   //그리고 그 가용블럭이 best_size보다 작다면
+                {                           
+                    best_size = block_size; //best size를 현재 block_size로 맞춘다 (더 맞춤값이 있다면 찾고)
+                    best_bp = bp;           //그리고 그 포인터 저장. 맘에 드는 best fit이 아니더라도, 일단 할당을 해야하기떄문에 제일 맞춤인 곳을 찾고, bp를 지정해야함.
+                }  
             }
         bp = SUCC(bp);  //아니면 다음포인터를 가리키자
     }
-    return NULL;
+    return best_bp;
     //할당기가 요청한 크기를 조정후, 적절한 가용 블록을 가용 리스트에서 검색한다.
     //맞는 블록을 찾으면 할당기는 요청한 블록을 배치하고, 옵션으로 초과부분을 분할하고, 새롭게 할당한 블록을 리턴한다. 
 }
