@@ -14,7 +14,7 @@
 
 #define WSIZE 4 // 1워드, 헤더와 푸터 사이즈 4.
 #define DSIZE 8 // 2워드 사이즈 8
-#define CHUNKSIZE (1<<12) // 확장을 위한 기본크기 CHUNKSIZE
+#define CHUNKSIZE (1<<12) // 확장을 위한 기본크기 CHUNKSIZE 한번확장할떄 4KB만큼 확장하지롱
 
 #define MAX(x, y) ((x) > (y) ? (x) : (y))   //
 
@@ -40,6 +40,9 @@
 
 #define PRED(bp)    (*(void **)(bp))    //bp는 가용 블록의 시작주소, bp주소에서 void*타입의 값을 읽는다.
 #define SUCC(bp)    (*(void **)((char *)(bp) + WSIZE))  //bp는 가용블록의 시작 주소. char~는 bp주소에서 WSIZE를 더한 주소를 계산하고 계산된 주소에서 void*타입의 값을 읽어.
+
+#define SEGR_SIZE (12)
+#define GET_ROOT(class) (*(void **)((char *)(free_listp) + (WSIZE * class)))
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -76,179 +79,76 @@ team_t team = {
 
 #define SIZE_T_SIZE (ALIGN(sizeof(size_t))) //정렬하는 친구
 
+static char *free_listp = NULL;  
 
-static char *free_listp; 
-static char *free_listp_64; 
-static char *free_listp_512;
-static char *free_listp_4096;  
+int get_class(size_t size)
+{
+    if (size < 16) // 최소 블록 크기는 16바이트
+        return -1; // 잘못된 크기
+
+    // 클래스별 최소 크기
+    size_t class_sizes[SEGR_SIZE];
+    class_sizes[0] = 16;
+
+    // 주어진 크기에 적합한 클래스 검색
+    for (int i = 0; i < SEGR_SIZE; i++)
+    {
+        if (i != 0)
+            class_sizes[i] = class_sizes[i - 1] << 1;
+        if (size <= class_sizes[i])
+            return i;
+    }
+
+    // 주어진 크기가 마지막 클래스의 범위를 넘어갈 경우, 마지막 클래스로 처리
+    return SEGR_SIZE - 1;
+}
 
 void insert_block(void *bp)
 {
-    size_t size = GET_SIZE(bp);
-    if (size <= 8){
-    SUCC(bp) = free_listp;  // 새로운블록(bp)의 후속 블록이 free_listp가 된다.
+    int class = get_class(GET_SIZE(HDRP(bp)));
+    SUCC(bp) = GET_ROOT(class);
 
-    if (free_listp != NULL) //이제 free_listp가 NULL이 아니면
-    {
-        PRED(free_listp) = bp;   //free_listp(첫번쨰 가용리스트의 주소, 이제 다음에 들어온 친구가있으니까 첫번쨰 가용리스트에서 PRED값이 bp를 가리키게 하고)
-    }
-    free_listp = bp;
-    }
-
-    else if (size <= 64){
-    SUCC(bp) = free_listp_64;
-    if (free_listp_64 != NULL)
-    {
-        PRED(free_listp_64) = bp;
-    }
-
-    free_listp_64 = bp;  
-    }
-    else if (size <= 512)
-    {
-    SUCC(bp) = free_listp_512;
-    if (free_listp_512 != NULL)
-    {
-        PRED(free_listp_512) = bp;
-    }
-
-    free_listp_512 = bp;
-    }
-
-    else
-    {
-    SUCC(bp) = free_listp_4096;
-    if(free_listp_4096 != NULL)
-    {
-        PRED(free_listp_4096) = bp;
-    }
-    free_listp_4096 = bp;
-
-    }
-
+    if (GET_ROOT(class) != NULL) //이제 free_listp가 NULL이 아니면
+        PRED(GET_ROOT(class)) = bp;   //free_listp(첫번쨰 가용리스트의 주소, 이제 다음에 들어온 친구가있으니까 첫번쨰 가용리스트에서 PRED값이 bp를 가리키게 하고)
+    GET_ROOT(class) = bp;        //free_listp가 가리키는 포인터는 bp가 된다.(다시 첫번쨰 블록을 가리키게)
 }
 
 void delete_block(void *bp) 
 {
-    size_t size = GET_SIZE(bp);
-    if(size <= 8)
+    int class = get_class(GET_SIZE(HDRP(bp)));
+    if (bp == GET_ROOT(class))    //첫번쨰이면
     {
-        if(bp == free_listp)    //첫번쨰이면
-        {
-            free_listp = SUCC(free_listp);  //포인터만 다음으로 넘기고
-            return;
-        } 
-    
-        SUCC(PRED(bp)) = SUCC(bp);  //리스트 중간 혹은 끝일경우, 이전블록의 SUCC을 현재 블록의 
+        GET_ROOT(class) = SUCC(GET_ROOT(class));  //포인터만 다음으로 넘기고
+        return;
+    } 
+        
+    SUCC(PRED(bp)) = SUCC(bp);  //리스트 중간 혹은 끝일경우, 이전블록의 SUCC을 현재 블록의 
 
-        if (SUCC(bp) != NULL)   //만약 중간에 있는 아이라면
-        {
-            PRED(SUCC(bp)) = PRED(bp);  //내 다음에 있었던 블록의 PREV가 내 전 블록을 가리키게, PRED(bp)
-        }
-    }
-    else if (size <= 64)
+    if (SUCC(bp) != NULL)   //만약 중간에 있는 아이라면
     {
-        if(bp == free_listp_64)
-        {
-            free_listp_64 = SUCC(free_listp_64);
-            return;
-        }
-        SUCC(PRED(bp)) = SUCC(bp);
-        if(SUCC(bp) != NULL)
-        {
-            PRED(SUCC(bp)) = PRED(bp);
-        }
-    }
-    else if (size <= 512)
-    {
-        if(bp == free_listp_512)
-        {
-            free_listp_512 = SUCC(free_listp_512);
-            return;
-        }
-        SUCC(PRED(bp)) = SUCC(bp);
-        if(SUCC(bp) != NULL)
-        {
-            PRED(SUCC(bp)) = PRED(bp);
-        }
-    }
-    else
-    {
-        if(bp == free_listp_4096)
-        {
-            free_listp_4096 = SUCC(free_listp_4096);
-            return;
-        }
-        SUCC(PRED(bp)) = SUCC(bp);
-        if(SUCC(bp) != NULL)
-        {
-            PRED(SUCC(bp)) = PRED(bp);
-        }
+        PRED(SUCC(bp)) = PRED(bp);  //내 다음에 있었던 블록의 PREV가 내 전 블록을 가리키게, PRED(bp)
     }
 
 }
 
+
+
 static void *find_fit(size_t asize)
 {
-    void *bp;
-    size_t size;
-    if (asize <= 8)
+    int class = get_class(asize);
+    void *bp = GET_ROOT(class);  //free list의 포인터를 가져오고
+    while (class < SEGR_SIZE)
     {
-        bp = free_listp;
-        while (bp != NULL)
-        {
-            size_t size = GET_SIZE(HDRP(bp));
-            if(size >= asize)
-            {
-                return bp;
-            }
-            bp = SUCC(bp);
-        }
-        return NULL;
-    }
-    else if (asize <= 64)
-    {
-        bp = free_listp_64;
-        while (bp != NULL)
-        {
-            size_t size = GET_SIZE(HDRP(bp));
-            if(size >= asize)
-            {
-                return bp;
-            }
-            bp = SUCC(bp);
-        }
-        return NULL;
-    }
-    else if (asize <= 512)
-    {
-        bp = free_listp_512;
-        
-        while (bp != NULL)
-        {
-            size_t size = GET_SIZE(HDRP(bp));
-            if(size >= asize)
-            {
-                return bp;
-            }
-            bp = SUCC(bp);
-        }
-        return NULL;
-    }
-    else
-    {
-        bp = free_listp_4096;
+        bp = GET_ROOT(class);
         while(bp != NULL)
         {
-            size_t size = GET_SIZE(HDRP(bp));
-            if(size>= asize)
-            {
+            if((asize <= GET_SIZE(HDRP(bp))))
                 return bp;
-            }
             bp = SUCC(bp);
         }
-        return NULL;
+        class += 1;
     }
+    return NULL;
     //할당기가 요청한 크기를 조정후, 적절한 가용 블록을 가용 리스트에서 검색한다.
     //맞는 블록을 찾으면 할당기는 요청한 블록을 배치하고, 옵션으로 초과부분을 분할하고, 새롭게 할당한 블록을 리턴한다. 
 }
@@ -317,7 +217,7 @@ static void *coalesce(void *bp) //병합을 하는 경우는 free, extend 일때
 //새 가용 블록으로 힙 확장하기
 static void *extend_heap(size_t words)
 {
-    char *bp;
+    char *bp;   
     size_t size;
 
     size = (words % 2) ? (words + 1) * WSIZE : words * WSIZE;   // 힙이 초기화될때, malloc이 적당한 맞춤을 찾지 못했을때, 정렬을 유지하기 위해서 요청한 크기를 2워드의 배수로 반올림하고
@@ -326,6 +226,8 @@ static void *extend_heap(size_t words)
     if ((long)(bp = mem_sbrk(size)) == -1){                 //메모리 시스템으로부터 추가적인 힙 공간을 요청한다
         return NULL;
     }
+    //mem_sbrk의 호출에서 반환값을 저장. 힙을 size만큼 확장후 확장된 메모리 영역의 시작 주소 반환.
+
                                             //힙은 더블 워드 경계에서 시작하고, extend_heap 으로 가는 모든 호출은 에필로그 브록의 헤더에 곧이어서 더블 워드 정렬된 메모리 블록을 리턴한다
     PUT(HDRP(bp), PACK(size, 0));           //새 가용 블록의 헤더 설정
     PUT(FTRP(bp), PACK(size, 0));           //새 가용 블록의 푸터 설정
@@ -341,22 +243,22 @@ static void *extend_heap(size_t words)
 int mm_init(void)
 {
     //create the initial empty heap
-    if ((free_listp = mem_sbrk(8*WSIZE)) == (void *)-1) { //mem_sbrk를 호출해서 힙을 CHUNKSIZE바이트로 확장하고 초기 가용 블록을 생성한다.
+    if ((free_listp = mem_sbrk((SEGR_SIZE + 4) * WSIZE)) == (void *)-1) { //mem_sbrk를 호출해서 힙을 CHUNKSIZE바이트로 확장하고 초기 가용 블록을 생성한다.
         return -1;
     }
     PUT(free_listp, 0); //메모리 블록의 시작 부분. 초기화를 위한 부분?
-    PUT(free_listp + (1*WSIZE), PACK(DSIZE, 1)); //prologue header 묵시적 가용 리스트의 불변형식인 prologue블록 2개와 
-    PUT(free_listp + (2*WSIZE), PACK(DSIZE, 1)); //1은 블록이 할당되었음을 나타냄 그러니까, 책 한권의 정보를 저장하는데 책 앞면과 뒷면에 정보를 저장하고, 책의 전체 크기를 알려주는 DSIZE가 되는것.
-    PUT(free_listp + (3*WSIZE), PACK(2*DSIZE, 0)); //가용 블록의 헤더
-    PUT(free_listp + (4*WSIZE), 0);  //PRED
-    PUT(free_listp + (5*WSIZE), 0);  //SUCC
-    PUT(free_listp + (6*WSIZE), PACK(2*DSIZE, 0));//가용 블록의 푸터
-    PUT(free_listp + (7*WSIZE), PACK(0,1)); //힙의 끝을 나타내고 더이상 확장되지 않음
+    PUT(free_listp + (1*WSIZE), PACK((SEGR_SIZE + 2)*WSIZE, 1));  
+    for(int i = 0; i < SEGR_SIZE; i++)
+    {
+        PUT(free_listp + ((2+i)*WSIZE), NULL);
+    }
+    PUT(free_listp + ((SEGR_SIZE + 2)*WSIZE), PACK((SEGR_SIZE + 2)*WSIZE, 1));  
+    PUT(free_listp + ((SEGR_SIZE + 3)*WSIZE), PACK(0,1)); 
     
-    free_listp += (4*WSIZE);
-    free_listp_64 = NULL;
-    free_listp_512 = NULL;
-    free_listp_4096 = NULL;
+    free_listp += (2*WSIZE);
+
+    if(extend_heap(4) == NULL)
+        return -1;
 
     //extend the empty heap with a free block of CHUNKSIZE bytes    
     if (extend_heap(CHUNKSIZE/WSIZE) == NULL){  
@@ -441,7 +343,7 @@ void *mm_realloc(void *ptr, size_t size)
     void *newptr = mm_malloc(size);
     if (newptr == NULL)
       return NULL;
-    size_t copySize = GET_SIZE(HDRP(ptr)) - DSIZE;
+    size_t copySize = GET_SIZE(HDRP(ptr));
     if (size < copySize)
       copySize = size;
     memcpy(newptr, ptr, copySize);

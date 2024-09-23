@@ -42,7 +42,7 @@
 #define SUCC(bp)    (*(void **)((char *)(bp) + WSIZE))  //bp는 가용블록의 시작 주소. char~는 bp주소에서 WSIZE를 더한 주소를 계산하고 계산된 주소에서 void*타입의 값을 읽어.
 
 #define SEGR_SIZE (12)
-#define GET_ROOT(class) (*(void **)((char *)(free_listp) + (WSIZE * class)))
+#define GET_ROOT(class) (*(void **)((char *)(free_listp) + (WSIZE + class)))
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -83,31 +83,32 @@ static char *free_listp = NULL;
 
 int get_class(size_t size)
 {
-    if (size < 16) // 최소 블록 크기는 16바이트
-        return -1; // 잘못된 크기
-
-    // 클래스별 최소 크기
+    if (size < 16)
+    {
+        return -1;
+    }
     size_t class_sizes[SEGR_SIZE];
     class_sizes[0] = 16;
 
-    // 주어진 크기에 적합한 클래스 검색
     for (int i = 0; i < SEGR_SIZE; i++)
     {
-        if (i != 0)
+        if(i != 0)
+        {
             class_sizes[i] = class_sizes[i - 1] << 1;
-        if (size <= class_sizes[i])
+        }
+        if(size<= class_sizes[i])
+        {
             return i;
+        }
     }
-
-    // 주어진 크기가 마지막 클래스의 범위를 넘어갈 경우, 마지막 클래스로 처리
-    return SEGR_SIZE - 1;
+    return SEGR_SIZE -1;
 }
 
-void insert_block(void *bp)
+static void insert_block(void *bp)
 {
     int class = get_class(GET_SIZE(HDRP(bp)));
     void *tp = GET_ROOT(class);
-    if(tp == NULL)
+    if (tp == NULL)
     {
         GET_ROOT(class) = bp;
         SUCC(bp) = NULL;
@@ -117,23 +118,26 @@ void insert_block(void *bp)
     while(tp < bp)
     {
         if(SUCC(tp) == NULL || SUCC(tp) > bp)
+        {
             break;
+        }
         tp = SUCC(tp);
     }
+
     SUCC(bp) = SUCC(tp);
     SUCC(tp) = bp;
     PRED(bp) = tp;
 
-    if(SUCC(bp) != NULL)
+    if (SUCC(bp) != NULL)
     {
         PRED(SUCC(bp)) = bp;
     }
 }
 
-void delete_block(void *bp) 
+static void delete_block(void *bp) 
 {
     int class = get_class(GET_SIZE(HDRP(bp)));
-    if (bp == GET_ROOT(class))    //첫번쨰이면
+    if(bp == GET_ROOT(class))    //첫번쨰이면
     {
         GET_ROOT(class) = SUCC(GET_ROOT(class));  //포인터만 다음으로 넘기고
         return;
@@ -154,27 +158,26 @@ static void *find_fit(size_t asize)
 {
     int class = get_class(asize);
     void *bp = GET_ROOT(class);  //free list의 포인터를 가져오고
-    while (class < SEGR_SIZE)
+    while(class < SEGR_SIZE)
     {
         bp = GET_ROOT(class);
         while(bp != NULL)
         {
-            if((asize <= GET_SIZE(HDRP(bp))))
+            if ((asize<= GET_SIZE(HDRP(bp))))
+            {
                 return bp;
+            }
             bp = SUCC(bp);
         }
         class += 1;
     }
     return NULL;
-    //할당기가 요청한 크기를 조정후, 적절한 가용 블록을 가용 리스트에서 검색한다.
-    //맞는 블록을 찾으면 할당기는 요청한 블록을 배치하고, 옵션으로 초과부분을 분할하고, 새롭게 할당한 블록을 리턴한다. 
 }
 
 static void place(void *bp, size_t asize)
 {   
-    int class = get_class(asize);
     size_t csize = GET_SIZE(HDRP(bp));
-    
+
     if ((csize - asize) >= (2*DSIZE)) //만약 헤더와 풋터, 그리고 페이로드를 넣을 공간(16비트)보다 사이즈가 크다면
     {
         PUT(HDRP(bp), PACK(asize, 1));
@@ -184,10 +187,9 @@ static void place(void *bp, size_t asize)
         PUT(FTRP(bp), PACK(csize - asize, 0));
         SUCC(bp) = SUCC(PREV_BLKP(bp));
 
-
-        if (PREV_BLKP(bp) == GET_ROOT(class))
+        if(PREV_BLKP(bp) == free_listp)
         {
-            GET_ROOT(class) = bp;
+            free_listp = bp;
         }
         else
         {
@@ -195,8 +197,10 @@ static void place(void *bp, size_t asize)
             SUCC(PRED(PREV_BLKP(bp))) = bp;
         }
 
-        if(SUCC(bp) != NULL)
+        if (SUCC(bp) != NULL)
+        {
             PRED(SUCC(bp)) = bp;
+        } 
     }
     else
     {
@@ -275,20 +279,19 @@ static void *extend_heap(size_t words)
 int mm_init(void)
 {
     //create the initial empty heap
-    if ((free_listp = mem_sbrk((SEGR_SIZE + 4) * WSIZE)) == (void *)-1) { //mem_sbrk를 호출해서 힙을 CHUNKSIZE바이트로 확장하고 초기 가용 블록을 생성한다.
+    if ((free_listp = mem_sbrk((SEGR_SIZE + 4)*WSIZE)) == (void *)-1) { //mem_sbrk를 호출해서 힙을 CHUNKSIZE바이트로 확장하고 초기 가용 블록을 생성한다.
         return -1;
     }
     PUT(free_listp, 0); //메모리 블록의 시작 부분. 초기화를 위한 부분?
-    PUT(free_listp + (1*WSIZE), PACK((SEGR_SIZE + 2)*WSIZE, 1));  
-    for(int i = 0; i < SEGR_SIZE; i++)
+    PUT(free_listp + (1*WSIZE), PACK((SEGR_SIZE + 2) * WSIZE, 1)); 
+    for (int i = 0; i < SEGR_SIZE; i++)
     {
-        PUT(free_listp + ((2+i)*WSIZE), NULL);
+        PUT(free_listp + ((2+i) * WSIZE), NULL);
     }
-    PUT(free_listp + ((SEGR_SIZE + 2)*WSIZE), PACK((SEGR_SIZE + 2)*WSIZE, 1));  
-    PUT(free_listp + ((SEGR_SIZE + 3)*WSIZE), PACK(0,1)); 
-    
-    free_listp += (2*WSIZE);
+    PUT(free_listp + ((SEGR_SIZE + 2)*WSIZE), PACK((SEGR_SIZE + 2) * WSIZE,1)); 
+    PUT(free_listp + ((SEGR_SIZE + 3)*WSIZE), PACK(0, 1));
 
+    free_listp += (2*WSIZE);
     if(extend_heap(4) == NULL)
         return -1;
 
